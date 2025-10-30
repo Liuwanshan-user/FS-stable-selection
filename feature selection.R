@@ -260,6 +260,19 @@ performance_summary <- data.frame(
 write.csv(performance_summary, "results/performance_summary.csv", row.names = FALSE)
 cat("已保存: results/performance_summary.csv\n")
 
+# 5.4 导出选中特征的表达数据
+selected_data <- data.frame(
+  id = sample_ids,
+  label = y,
+  cohort = cohort
+)
+
+# 添加选中特征的原始表达数据
+selected_data <- cbind(selected_data, X_raw[, selected_features, drop = FALSE])
+
+write.csv(selected_data, "results/selected_features_expression_data.csv", row.names = FALSE)
+cat(sprintf("已保存: results/selected_features_expression_data.csv (id + label + cohort + %d个特征)\n", n_selected))
+
 # ==========================================
 # 6. 可视化
 # ==========================================
@@ -363,8 +376,9 @@ cat("\n输出文件:\n")
 cat("1. results/feature_stability_scores.csv - 所有特征的稳定性得分\n")
 cat("2. results/selected_features.csv - 选中的特征列表\n")
 cat("3. results/performance_summary.csv - 性能指标汇总\n")
-cat("4. results/roc_curves.png - ROC曲线\n")
-cat("5. results/pr_curves.png - PR曲线\n")
-cat("6. results/confusion_matrices.png - 混淆矩阵\n")
-cat("7. results/stability_score_distribution.png - 稳定性得分分布\n")
+cat("4. results/selected_features_expression_data.csv - 选中特征的表达数据 (id+label+cohort+特征)\n")
+cat("5. results/roc_curves.png - ROC曲线\n")
+cat("6. results/pr_curves.png - PR曲线\n")
+cat("7. results/confusion_matrices.png - 混淆矩阵\n")
+cat("8. results/stability_score_distribution.png - 稳定性得分分布\n")
 cat("==========================================\n")
