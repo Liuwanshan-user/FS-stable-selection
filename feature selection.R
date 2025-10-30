@@ -1,5 +1,5 @@
 # ==========================================
-# Stability Selection - 简化版
+# Stability Selection - 蛋白组/代谢组特征选择
 # ==========================================
 # 日期: 2025-10-30
 # 功能: 特征选择 + 核心评估指标
@@ -8,17 +8,20 @@
 # ==========================================
 # 核心参数设置
 # ==========================================
-CUTOFF <- 0.50              # 稳定性选择阈值
+STABSEL_CUTOFF <- 0.65      # stabsel函数的cutoff参数 (必须 > 0.5)
+FINAL_CUTOFF <- 0.50        # 最终筛选特征的阈值 (可以 < 0.5)
 B_SAMPLING <- 100           # 抽样次数
 FRACTION <- 0.75            # 每次抽样比例
 RANDOM_SEED <- 123          # 随机种子
-CV_FOLDS <- 5              # 交叉验证折数
+CV_FOLDS <- 5               # 交叉验证折数
+PFER <- 2                   # Per-Family Error Rate
+INPUT_FILE <- "significant_metabolite_data.csv"  # 输入文件名
 
 # ==========================================
 # 安装和加载必要的包
 # ==========================================
 cat("加载R包...\n")
-packages <- c("stabs", "glmnet", "ggplot2", "dplyr", "pROC", "PRROC", "caret")
+packages <- c("caret", "stabs", "glmnet", "ggplot2", "dplyr", "pROC", "PRROC")
 
 for (pkg in packages) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
@@ -37,7 +40,7 @@ cat("\n==========================================\n")
 cat("1. 读取数据\n")
 cat("==========================================\n")
 
-data <- read.csv("significant_metabolite_data.csv")
+data <- read.csv(INPUT_FILE)
 cat("数据维度:", dim(data), "\n")
 
 # 提取特征和标签
@@ -71,10 +74,7 @@ cat("==========================================\n")
 y_train <- y[train_idx]
 y_test <- y[test_idx]
 
-# 使用caret的preProcess进行一站式预处理
-library(caret)
-
-# Log2转换（如果有负值先平移）
+# Log2转换
 X_log2 <- log2(X_raw)
 
 # 创建预处理对象（基于训练集）
@@ -95,7 +95,8 @@ cat("预处理完成 (使用caret::preProcess)\n")
 cat("\n==========================================\n")
 cat("3. Stability Selection\n")
 cat("==========================================\n")
-cat(sprintf("参数: cutoff=%.2f, B=%d, fraction=%.2f\n", CUTOFF, B_SAMPLING, FRACTION))
+cat(sprintf("参数: stabsel_cutoff=%.2f, final_cutoff=%.2f, B=%d, fraction=%.2f\n",
+            STABSEL_CUTOFF, FINAL_CUTOFF, B_SAMPLING, FRACTION))
 
 start_time <- Sys.time()
 
@@ -103,8 +104,8 @@ stab_sel <- stabsel(
   x = X_train,
   y = factor(y_train),
   fitfun = glmnet.lasso,
-  cutoff = 0.65,
-  PFER = 2,
+  cutoff = STABSEL_CUTOFF,     # stabsel函数的cutoff (必须 > 0.5)
+  PFER = PFER,
   sampling.type = "SS",
   B = B_SAMPLING,
   assumption = "unimodal",
@@ -118,16 +119,16 @@ cat(sprintf("完成，用时: %.2f 分钟\n", ss_time))
 stability_scores <- stab_sel$max
 names(stability_scores) <- feature_names
 
-# 选择特征
-selected_features <- feature_names[stability_scores >= CUTOFF]
+# 选择特征（使用FINAL_CUTOFF，可以 < 0.5）
+selected_features <- feature_names[stability_scores >= FINAL_CUTOFF]
 n_selected <- length(selected_features)
 
-cat(sprintf("\n选中特征数: %d / %d (%.1f%%)\n", 
-            n_selected, length(feature_names), 
+cat(sprintf("\n选中特征数: %d / %d (%.1f%%)\n",
+            n_selected, length(feature_names),
             n_selected/length(feature_names)*100))
 
 if (n_selected == 0) {
-  stop("错误: 未选中任何特征，请降低阈值")
+  stop("错误: 未选中任何特征，请降低FINAL_CUTOFF阈值")
 }
 
 # ==========================================
@@ -149,7 +150,7 @@ final_model <- cv.glmnet(
   family = "binomial",
   alpha = 1,
   type.measure = "auc",
-  nfolds = 10
+  nfolds = CV_FOLDS
 )
 
 # --- 训练集评估 (交叉验证) ---
@@ -161,10 +162,11 @@ train_cv_pred <- numeric(length(y_train))
 for (i in 1:CV_FOLDS) {
   test_idx_cv <- folds[[i]]
   train_idx_cv <- setdiff(1:length(y_train), test_idx_cv)
-  
+
   cv_model <- cv.glmnet(X_train_selected[train_idx_cv, ], y_train[train_idx_cv],
-                        family = "binomial", alpha = 1, type.measure = "auc")
-  
+                        family = "binomial", alpha = 1, type.measure = "auc",
+                        nfolds = CV_FOLDS)
+
   train_cv_pred[test_idx_cv] <- as.vector(
     predict(cv_model, newx = X_train_selected[test_idx_cv, , drop = FALSE],
             s = "lambda.min", type = "response")
@@ -322,12 +324,12 @@ cat("已保存: results/confusion_matrices.png\n")
 # 6.4 稳定性得分分布
 p_dist <- ggplot(scores_df, aes(x = Stability_Score, fill = Selected)) +
   geom_histogram(bins = 50, alpha = 0.7, position = "identity") +
-  geom_vline(xintercept = CUTOFF, linetype = "dashed",
+  geom_vline(xintercept = FINAL_CUTOFF, linetype = "dashed",
              color = "red", linewidth = 1.2) +
   scale_fill_manual(values = c("FALSE" = "gray70", "TRUE" = "darkgreen"),
                     labels = c("Not Selected", "Selected")) +
-  annotate("text", x = CUTOFF, y = Inf,
-           label = sprintf("Cutoff = %.2f", CUTOFF),
+  annotate("text", x = FINAL_CUTOFF, y = Inf,
+           label = sprintf("Cutoff = %.2f", FINAL_CUTOFF),
            hjust = -0.1, vjust = 2, color = "red",
            size = 5, fontface = "bold") +
   labs(title = "Stability Score Distribution",
